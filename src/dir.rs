@@ -408,7 +408,11 @@ impl<'a, T: ReadWriteSeek + 'a> Dir<'a, T> {
 
     #[cfg(feature = "alloc")]
     fn encode_lfn_utf16(name: &str) -> Vec<u16> {
-        name.encode_utf16().collect::<Vec<u16>>()
+        if name == "." || name == ".." {
+            vec![]
+        } else {
+            name.encode_utf16().collect::<Vec<u16>>()
+        }
     }
     #[cfg(not(feature = "alloc"))]
     fn encode_lfn_utf16(_name: &str) -> () {
@@ -431,6 +435,12 @@ impl<'a, T: ReadWriteSeek + 'a> Dir<'a, T> {
         Ok((stream, start_pos))
     }
 
+    fn alloc_sfn_entry(&self) -> io::Result<(DirRawStream<'a, T>, u64)> {
+        let mut stream = self.find_free_entries(1)?;
+        let start_pos = stream.seek(io::SeekFrom::Current(0))?;
+        Ok((stream, start_pos))
+    }
+
     fn write_entry(&self, name: &str, raw_entry: DirFileEntryData) -> io::Result<DirEntry<'a, T>> {
         trace!("write_entry {}", name);
         // check if name doesn't contain unsupported characters
@@ -438,7 +448,11 @@ impl<'a, T: ReadWriteSeek + 'a> Dir<'a, T> {
         // convert long name to UTF-16
         let lfn_utf16 = Self::encode_lfn_utf16(name);
         // write LFN entries
-        let (mut stream, start_pos) = self.alloc_and_write_lfn_entries(&lfn_utf16, raw_entry.name())?;
+        let (mut stream, start_pos) = if lfn_utf16.is_empty() {
+                self.alloc_sfn_entry()?
+            } else {
+                self.alloc_and_write_lfn_entries(&lfn_utf16, raw_entry.name())?
+            };
         // write short name entry
         raw_entry.serialize(&mut stream)?;
         let end_pos = stream.seek(io::SeekFrom::Current(0))?;
@@ -831,6 +845,15 @@ impl ShortNameGenerator {
         let mut short_name = [0x20u8; 11];
         // find extension after last dot
         let (basename_len, name_fits, lossy_conv) = match name.rfind('.') {
+            Some(0) if name == "." => {
+                short_name[0] = b'.';
+                (8, true, false)
+            }
+            Some(1) if name == ".." => {
+                short_name[0] = b'.';
+                short_name[1] = b'.';
+                (8, true, false)
+            }
             Some(index) => {
                 // extension found - copy parts before and after dot
                 let (basename_len, basename_fits, basename_lossy) = Self::copy_short_name_part(&mut short_name[0..8], &name[..index]);
@@ -1004,6 +1027,8 @@ mod tests {
         assert_eq!(&ShortNameGenerator::new("Foo+1.baR").generate().unwrap(), b"FOO_1~1 BAR");
         assert_eq!(&ShortNameGenerator::new("ver +1.2.text").generate().unwrap(), b"VER_12~1TEX");
         assert_eq!(&ShortNameGenerator::new(".bashrc.swp").generate().unwrap(), b"BASHRC~1SWP");
+        assert_eq!(&ShortNameGenerator::new(".").generate().unwrap(), b".          ");
+        assert_eq!(&ShortNameGenerator::new("..").generate().unwrap(), b"..         ");
     }
 
     #[test]
