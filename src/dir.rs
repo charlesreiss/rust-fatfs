@@ -502,8 +502,13 @@ impl<'a, IO: ReadWriteSeek, TP: TimeProvider, OCC: OemCpConverter> Dir<'a, IO, T
 
     #[cfg(feature = "lfn")]
     fn encode_lfn_utf16(name: &str) -> LfnBuffer {
-        LfnBuffer::from_ucs2_units(name.encode_utf16())
+        if name == "." || name == ".." {
+            LfnBuffer::new()
+        } else {
+            LfnBuffer::from_ucs2_units(name.encode_utf16())
+        }
     }
+
     #[cfg(not(feature = "lfn"))]
     fn encode_lfn_utf16(_name: &str) -> LfnBuffer {
         LfnBuffer {}
@@ -1266,6 +1271,8 @@ mod tests {
             Some(*b"BASHRC~1SWP")
         );
         assert_eq!(ShortNameGenerator::new(".foo").generate().ok(), Some(*b"FOO~1      "));
+        assert_eq!(ShortNameGenerator::new(".").generate().ok(), Some(*b".          "));
+        assert_eq!(ShortNameGenerator::new("..").generate().ok(), Some(*b"..         "));
     }
 
     #[test]
